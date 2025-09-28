@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  readme-hardener:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=true
+      - PORT=8000
+    volumes:
+      - .:/app
+    command: python readme_hardener.py --help
+  
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"

@@ -1,7 +1,5 @@
 # 
 
-A comprehensive README & Script Hardener CLI tool
-
 ## Installation
 
 ### Python Dependencies
@@ -17,6 +15,24 @@ pip install -r requirements.txt
 python <script_name>.py
 ```
 
+### Docker
+```bash
+# Build the image
+docker build -t  .
+
+# Run the container
+docker run -p 8000:8000 
+```
+
+### Docker Compose
+```bash
+# Start services
+docker-compose -f docker-compose.yml up -d
+
+# Stop services
+docker-compose -f docker-compose.yml down
+```
+
 ## Environment Variables
 
 | Variable | Description |
@@ -28,11 +44,17 @@ python <script_name>.py
 
 ## Make Targets
 
+- `make build`
+- `make install`
+- `make lint`
+- `make run`
 - `make test`
 - `make clean`
-- `make lint`
-- `make install`
-- `make run`
-- `make build`
+
+## Services
+
+This project uses Docker Compose with the following services:
+
+See `docker-compose.yml` for service configuration.
 
 <!-- README-HARDENER-MARKER: REPO -->
