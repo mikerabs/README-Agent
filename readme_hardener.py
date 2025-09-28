@@ -18,6 +18,13 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
+try:
+    import openai
+    from dotenv import load_dotenv
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 
 class ScriptHardener:
     """Handles enhancement of individual Python scripts."""
@@ -248,6 +255,14 @@ class RepoHardener:
         self.repo_path = Path(repo_path)
         self.detected_files: Dict[str, List[str]] = {}
         
+        # Load environment variables
+        if OPENAI_AVAILABLE:
+            load_dotenv()
+            self.openai_client = None
+            api_key = os.getenv('OPENAI_API_KEY')
+            if api_key:
+                self.openai_client = openai.OpenAI(api_key=api_key)
+        
     def detect_project_files(self) -> Dict[str, List[str]]:
         """Detect relevant project files in the repository.
         
@@ -349,6 +364,179 @@ class RepoHardener:
             f.write(readme_content)
             
         return str(output_file)
+    
+    def generate_readme_with_openai(self, output_path: str = "README.md", notes: Optional[str] = None) -> str:
+        """Generate comprehensive README for the repository using OpenAI.
+        
+        Args:
+            output_path: Path to output README
+            notes: Additional notes to include
+            
+        Returns:
+            Path to generated README
+            
+        Raises:
+            RuntimeError: If OpenAI is not available or API key is not set
+        """
+        if not OPENAI_AVAILABLE:
+            raise RuntimeError("OpenAI integration requires 'openai' and 'python-dotenv' packages. Install with: pip install openai python-dotenv")
+        
+        if not self.openai_client:
+            raise RuntimeError("OpenAI API key not found. Please set OPENAI_API_KEY in your environment or .env file")
+        
+        # Analyze repository structure
+        detected = self.detect_project_files()
+        project_name = os.path.basename(os.path.abspath(self.repo_path))
+        
+        # Gather context about the project
+        context_info = self._gather_project_context(detected)
+        
+        # Create prompt for OpenAI
+        prompt = self._create_readme_prompt(project_name, context_info, notes)
+        
+        try:
+            # Generate README using OpenAI
+            response = self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are an expert technical writer specializing in creating comprehensive README files for software projects."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2000,
+                temperature=0.7
+            )
+            
+            ai_generated_content = response.choices[0].message.content
+            
+            # Handle existing README
+            output_file = self.repo_path / output_path
+            if output_file.exists():
+                ai_generated_content = self._merge_with_existing(str(output_file), ai_generated_content)
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(ai_generated_content)
+                
+            return str(output_file)
+            
+        except Exception as e:
+            raise RuntimeError(f"Error generating README with OpenAI: {e}")
+    
+    def _gather_project_context(self, detected: Dict[str, List[str]]) -> str:
+        """Gather context information about the project for OpenAI prompt.
+        
+        Args:
+            detected: Detected project files
+            
+        Returns:
+            Context information as a string
+        """
+        context_parts = []
+        
+        # Python files analysis
+        if detected['python_scripts']:
+            context_parts.append(f"Python scripts: {', '.join(detected['python_scripts'])}")
+            
+            # Try to read main script for context
+            main_scripts = [s for s in detected['python_scripts'] if 'main' in s.lower() or s == 'app.py' or s == 'run.py']
+            if not main_scripts and detected['python_scripts']:
+                main_scripts = [detected['python_scripts'][0]]  # Use first script as fallback
+                
+            for script in main_scripts[:1]:  # Only analyze one main script
+                try:
+                    script_path = self.repo_path / script
+                    if script_path.exists():
+                        with open(script_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            # Extract docstrings and function/class names
+                            tree = ast.parse(content)
+                            functions = [node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+                            classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+                            if functions:
+                                context_parts.append(f"Main functions: {', '.join(functions[:5])}")  # Limit to 5
+                            if classes:
+                                context_parts.append(f"Main classes: {', '.join(classes[:3])}")  # Limit to 3
+                except Exception:
+                    pass  # Ignore parsing errors
+        
+        # Dependencies
+        if detected['python_deps']:
+            context_parts.append(f"Dependency files: {', '.join(detected['python_deps'])}")
+            
+            # Read requirements.txt for specific dependencies
+            for dep_file in detected['python_deps']:
+                if 'requirements' in dep_file:
+                    try:
+                        req_path = self.repo_path / dep_file
+                        if req_path.exists():
+                            with open(req_path, 'r', encoding='utf-8') as f:
+                                deps = [line.strip().split('>=')[0].split('==')[0] for line in f 
+                                       if line.strip() and not line.strip().startswith('#')]
+                                if deps:
+                                    context_parts.append(f"Key dependencies: {', '.join(deps[:8])}")  # Limit to 8
+                    except Exception:
+                        pass
+        
+        # Docker setup
+        if detected['dockerfile'] or detected['docker_compose']:
+            context_parts.append("Project uses Docker for containerization")
+        
+        # Make targets
+        if detected['makefile']:
+            makefile_path = self.repo_path / detected['makefile'][0]
+            try:
+                targets = self.analyze_makefile(detected['makefile'][0])
+                if targets:
+                    context_parts.append(f"Available make targets: {', '.join(targets[:6])}")
+            except Exception:
+                pass
+        
+        # Environment variables
+        if detected['env_files']:
+            try:
+                env_vars = self.analyze_env_file(detected['env_files'][0])
+                if env_vars:
+                    var_names = [var[0] for var in env_vars]
+                    context_parts.append(f"Environment variables: {', '.join(var_names[:5])}")
+            except Exception:
+                pass
+        
+        return "; ".join(context_parts)
+    
+    def _create_readme_prompt(self, project_name: str, context_info: str, notes: Optional[str]) -> str:
+        """Create a prompt for OpenAI to generate README content.
+        
+        Args:
+            project_name: Name of the project
+            context_info: Context information about the project
+            notes: Additional notes to include
+            
+        Returns:
+            Formatted prompt for OpenAI
+        """
+        prompt = f"""Create a comprehensive README.md file for a project named "{project_name}".
+
+Project Context:
+{context_info}
+
+Please generate a well-structured README that includes:
+1. A clear project title and description
+2. Installation instructions (based on the detected dependencies)
+3. Usage examples
+4. Configuration/Environment setup (if applicable)
+5. Development setup instructions
+6. Contributing guidelines (brief)
+7. License section (placeholder)
+
+Make the README professional, clear, and easy to follow. Use proper Markdown formatting.
+Focus on practical information that would help users understand and use the project.
+"""
+        
+        if notes:
+            prompt += f"\n\nAdditional context/notes to incorporate:\n{notes}"
+        
+        prompt += "\n\nGenerate only the README content, no extra commentary."
+        
+        return prompt
     
     def _build_readme_content(self, detected: Dict[str, List[str]], notes: Optional[str]) -> str:
         """Build README content based on detected files.
@@ -493,6 +681,9 @@ Examples:
   # Generate README for entire repository
   %(prog)s --repo
   
+  # Generate README using OpenAI
+  %(prog)s --repo --openai
+  
   # Specify output location
   %(prog)s --repo --out README_new.md
   
@@ -545,6 +736,13 @@ Examples:
             "--verify",
             action="store_true",
             help="Run black/ruff verification and show --help output"
+        )
+        
+        # OpenAI integration
+        parser.add_argument(
+            "--openai",
+            action="store_true",
+            help="Use OpenAI API to generate README content (requires OPENAI_API_KEY)"
         )
         
         return parser
@@ -653,8 +851,12 @@ Examples:
         # Generate README
         try:
             output_path = args.out or "README.md"
-            readme_path = hardener.generate_readme(output_path, notes)
-            print(f"README generated: {readme_path}")
+            if hasattr(args, 'openai') and args.openai:
+                readme_path = hardener.generate_readme_with_openai(output_path, notes)
+                print(f"README generated with OpenAI: {readme_path}")
+            else:
+                readme_path = hardener.generate_readme(output_path, notes)
+                print(f"README generated: {readme_path}")
         except Exception as e:
             print(f"Error generating README: {e}", file=sys.stderr)
             return 1
