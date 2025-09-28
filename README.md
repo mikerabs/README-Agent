@@ -1,7 +1,5 @@
 # README-Agent
 
-A comprehensive Python CLI tool for enhancing scripts with documentation and generating repository READMEs.
-
 ## Installation
 
 ### Python Dependencies
@@ -10,31 +8,6 @@ pip install -r requirements.txt
 ```
 
 ## Running the Application
-
-### CLI Usage Examples
-
-```bash
-# Show help
-python readme_hardener.py --help
-
-# Enhance a single Python script
-python readme_hardener.py --script my_script.py
-
-# Generate README for entire repository
-python readme_hardener.py --repo
-
-# Specify custom output location
-python readme_hardener.py --repo --out README_new.md
-
-# Add custom notes
-python readme_hardener.py --repo --notes "This is a special project"
-
-# Load notes from file
-python readme_hardener.py --repo --notes-file notes.txt
-
-# Run with verification (requires black/ruff)
-python readme_hardener.py --script my_script.py --verify
-```
 
 ### Local Development
 ```bash
@@ -71,12 +44,12 @@ docker-compose -f docker-compose.yml down
 
 ## Make Targets
 
+- `make run`
+- `make install`
+- `make build`
 - `make clean`
 - `make lint`
 - `make test`
-- `make run`
-- `make build`
-- `make install`
 
 ## Services
 
